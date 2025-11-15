@@ -6,13 +6,14 @@ via IMAP, with graceful error handling for connection issues.
 """
 
 import asyncio
-import os
-import logging
 from typing import Dict, Optional
 import aioimaplib
 
+from app.config import settings
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+
+logger = get_logger(__name__)
 
 
 class IMAPController:
@@ -31,23 +32,21 @@ class IMAPController:
     
     def _load_accounts(self) -> Dict[str, Dict[str, str]]:
         """
-        Load Gmail account configurations from environment variables.
+        Load Gmail account configurations from settings.
         
         Returns:
             Dict mapping email addresses to account configs
         """
         accounts = {}
         
-        for i in range(1, 4):
-            email = os.getenv(f'GMAIL_ACCOUNT_{i}_EMAIL')
-            password = os.getenv(f'GMAIL_ACCOUNT_{i}_PASSWORD')
-            
+        for email in settings.all_account_emails:
+            password = settings.get_account_password(email)
             if email and password:
                 accounts[email] = {
                     'email': email,
                     'password': password,
-                    'imap_server': os.getenv('IMAP_SERVER', 'imap.gmail.com'),
-                    'imap_port': int(os.getenv('IMAP_PORT', '993'))
+                    'imap_server': settings.imap_server,
+                    'imap_port': settings.imap_port
                 }
         
         return accounts

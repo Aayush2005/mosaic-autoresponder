@@ -7,10 +7,11 @@ and follow-up history with built-in idempotency.
 All methods assume connect() has been called. Raises RuntimeError if pool is not initialized.
 """
 
-import os
 from typing import Optional, Dict, List
 from datetime import datetime
 import asyncpg
+
+from app.config import settings
 
 
 class DatabaseNotConnectedError(RuntimeError):
@@ -29,17 +30,17 @@ class Database:
         Create connection pool to PostgreSQL database.
         
         Args:
-            database_url: PostgreSQL connection string. If None, reads from DATABASE_URL env var.
+            database_url: PostgreSQL connection string. If None, uses settings.database_url.
             
         Raises:
-            ValueError: If database_url is not provided and DATABASE_URL env var is not set
+            ValueError: If database_url is not provided and settings.database_url is not set
         """
         if self.pool is not None:
             return
         
-        url = database_url or os.getenv('DATABASE_URL')
+        url = database_url or settings.database_url
         if not url:
-            raise ValueError("DATABASE_URL environment variable not set")
+            raise ValueError("DATABASE_URL not configured in settings")
         
         self.pool = await asyncpg.create_pool(
             url,

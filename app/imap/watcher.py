@@ -6,16 +6,16 @@ and handles connection failures with exponential backoff.
 """
 
 import asyncio
-import os
-import logging
 from typing import List, Dict, Optional
 from datetime import datetime
 import aioimaplib
 
+from app.config import settings
 from app.imap.parser import parse_email
+from app.utils.logger import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class IMAPConnectionError(Exception):
@@ -51,30 +51,29 @@ class IMAPWatcher:
     
     def _load_accounts(self) -> List[Dict[str, str]]:
         """
-        Load Gmail account configurations from environment variables.
+        Load Gmail account configurations from settings.
         
         Returns:
             List of account configs with email, password, imap_server, imap_port
             
         Raises:
-            ValueError: If required environment variables are missing
+            ValueError: If required settings are missing
         """
         accounts = []
         
-        for i in range(1, 4):
-            email = os.getenv(f'GMAIL_ACCOUNT_{i}_EMAIL')
-            password = os.getenv(f'GMAIL_ACCOUNT_{i}_PASSWORD')
+        for email in settings.all_account_emails:
+            password = settings.get_account_password(email)
             
             if not email or not password:
                 raise ValueError(
-                    f"Missing GMAIL_ACCOUNT_{i}_EMAIL or GMAIL_ACCOUNT_{i}_PASSWORD"
+                    f"Missing email or password for account: {email}"
                 )
             
             accounts.append({
                 'email': email,
                 'password': password,
-                'imap_server': os.getenv('IMAP_SERVER', 'imap.gmail.com'),
-                'imap_port': int(os.getenv('IMAP_PORT', '993'))
+                'imap_server': settings.imap_server,
+                'imap_port': settings.imap_port
             })
         
         return accounts

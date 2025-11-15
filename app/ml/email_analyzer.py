@@ -7,18 +7,18 @@ for efficiency and cost reduction.
 
 import asyncio
 import json
-import logging
-import os
 import phonenumbers
 from typing import Dict, Optional
 
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.config import settings
 from app.utils.training_data_logger import log_training_data
+from app.utils.logger import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 INTENT_INTERESTED = "INTERESTED"
@@ -40,14 +40,13 @@ class EmailAnalyzer:
     
     def __init__(self):
         """Initialize the email analyzer with Groq API."""
-        api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY must be set in environment")
+        if not settings.groq_api_key:
+            raise ValueError("GROQ_API_KEY must be configured in settings")
         
         self.llm = ChatGroq(
-            model=os.getenv("GROQ_MODEL", "mixtral-8x7b-32768"),
+            model="mixtral-8x7b-32768",
             temperature=0,
-            groq_api_key=api_key,
+            groq_api_key=settings.groq_api_key,
             max_tokens=400
         )
         
