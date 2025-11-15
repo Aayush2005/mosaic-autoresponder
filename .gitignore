@@ -48,3 +48,6 @@ htmlcov/
 
 
 .kiro/
+examples/
+data/
+docs/

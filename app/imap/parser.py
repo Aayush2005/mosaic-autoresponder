@@ -2,7 +2,8 @@
 Email parsing and extraction for IMAP messages.
 
 Parses raw IMAP email data, extracts headers and body content,
-removes HTML and quoted text, and detects contact information.
+removes HTML and quoted text. Contact detection and intent classification
+are handled separately by email_analyzer.
 """
 
 import email
@@ -17,8 +18,6 @@ try:
     from email_reply_parser import EmailReplyParser
 except ImportError:
     EmailReplyParser = None
-
-from app.utils.contact_detector import ContactDetector
 
 
 class HTMLStripper(HTMLParser):
@@ -47,18 +46,20 @@ class EmailParser:
     Parse and extract structured data from raw IMAP emails.
     
     Handles header decoding, body extraction, HTML stripping,
-    quoted text removal, and contact information detection.
+    and quoted text removal. Does NOT perform intent classification
+    or contact detection - that's handled by email_analyzer.
     """
     
     def __init__(self):
-        self.contact_detector = ContactDetector()
+        """Initialize email parser."""
+        pass
     
     def parse_email(self, raw_email: bytes) -> Dict[str, any]:
         """
         Parse raw IMAP email into structured data.
         
-        Extracts headers, cleans body content, removes quoted text,
-        and detects contact information.
+        Extracts headers, cleans body content, and removes quoted text.
+        Does NOT perform intent classification or contact detection.
         
         Args:
             raw_email: Raw email bytes from IMAP fetch
@@ -73,8 +74,6 @@ class EmailParser:
                 - to_email: str
                 - date: str
                 - body: str (cleaned, no HTML, no quoted text)
-                - has_contact: bool
-                - contact_info: Dict (phone numbers, address)
         """
         msg = email.message_from_bytes(raw_email)
         
@@ -90,9 +89,6 @@ class EmailParser:
         body = self._extract_body(msg)
         body = self.clean_email_body(body)
         
-        # Detect contact information
-        contact_info = self.contact_detector.detect_contact_info(body)
-        
         return {
             'message_id': message_id,
             'thread_id': thread_id,
@@ -101,9 +97,7 @@ class EmailParser:
             'from_name': from_name,
             'to_email': to_email,
             'date': date,
-            'body': body,
-            'has_contact': contact_info['has_phone'] or contact_info['has_address'],
-            'contact_info': contact_info
+            'body': body
         }
     
     def clean_email_body(self, body: str) -> str:
