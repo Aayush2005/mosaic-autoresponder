@@ -8,12 +8,13 @@ no PII or metadata.
 
 import csv
 import os
-import logging
 from pathlib import Path
 from typing import Optional
 
+from app.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+
+logger = get_logger(__name__)
 
 
 class TrainingDataLogger:
@@ -41,7 +42,7 @@ class TrainingDataLogger:
         
         if not csv_file.exists():
             with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
+                writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                 writer.writerow(['email_text', 'intent_label'])
             logger.info(f"Created training data CSV at {self.csv_path}")
     
@@ -64,7 +65,7 @@ class TrainingDataLogger:
         
         try:
             with open(self.csv_path, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
+                writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                 writer.writerow([cleaned_text, intent])
             
             logger.debug(f"Logged training data: intent={intent}, text_length={len(cleaned_text)}")
