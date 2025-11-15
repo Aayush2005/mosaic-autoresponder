@@ -1,0 +1,17 @@
+[project]
+name = "mosaic-autoresponder"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aioimaplib>=2.0.1",
+    "aiosmtplib>=5.0.0",
+    "asyncpg>=0.30.0",
+    "email-reply-parser>=0.5.12",
+    "langchain>=1.0.7",
+    "langchain-groq>=1.0.1",
+    "phonenumbers>=9.0.18",
+    "python-dotenv>=1.2.1",
+    "redis>=7.0.1",
+]
