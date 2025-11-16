@@ -11,6 +11,7 @@ from typing import Optional, Dict, List
 from datetime import datetime
 from prisma import Prisma
 from prisma.models import EmailThread, EmailReply, FollowupSend, StageTransition
+from prisma.enums import ThreadStatus, ReplyIntent
 
 from app.config import settings
 
@@ -55,6 +56,71 @@ class PrismaDatabase:
                 "Database not connected. Call await db.connect() first."
             )
     
+    def _convert_to_snake_case(self, data: Dict) -> Dict:
+        """
+        Convert camelCase keys to snake_case for backward compatibility.
+        
+        Args:
+            data: Dict with camelCase keys from Prisma
+            
+        Returns:
+            Dict with snake_case keys
+        """
+        mapping = {
+            'messageId': 'message_id',
+            'threadId': 'thread_id',
+            'accountEmail': 'account_email',
+            'creatorEmail': 'creator_email',
+            'initialReplyReceivedAt': 'initial_reply_received_at',
+            'initialReplyProcessedAt': 'initial_reply_processed_at',
+            'initialReplyIntent': 'initial_reply_intent',
+            'initialReplyHasContact': 'initial_reply_has_contact',
+            'currentStage': 'current_stage',
+            'lastFollowupSentAt': 'last_followup_sent_at',
+            'nextFollowupAt': 'next_followup_at',
+            'failedSends': 'failed_sends',
+            'followupsSent': 'followups_sent',
+            'stopReason': 'stop_reason',
+            'delegatedToHuman': 'delegated_to_human',
+            'delegatedAt': 'delegated_at',
+            'completedAt': 'completed_at',
+            'createdAt': 'created_at',
+            'updatedAt': 'updated_at',
+            'emailThreadId': 'email_thread_id',
+            'receivedAt': 'received_at',
+            'processedAt': 'processed_at',
+            'replyToStage': 'reply_to_stage',
+            'bodyText': 'body_text',
+            'bodyHtml': 'body_html',
+            'hasPhone': 'has_phone',
+            'hasAddress': 'has_address',
+            'extractedPhone': 'extracted_phone',
+            'extractedAddress': 'extracted_address',
+            'analysisDetails': 'analysis_details',
+            'sentAt': 'sent_at',
+            'templateUsed': 'template_used',
+            'sendSuccess': 'send_success',
+            'sendError': 'send_error',
+            'smtpMessageId': 'smtp_message_id',
+            'fromStage': 'from_stage',
+            'toStage': 'to_stage',
+            'fromStatus': 'from_status',
+            'toStatus': 'to_status',
+            'triggeredByReplyId': 'triggered_by_reply_id',
+            'transitionedAt': 'transitioned_at'
+        }
+        
+        result = {}
+        for key, value in data.items():
+            # Convert enum to string
+            if hasattr(value, 'value'):
+                value = value.value
+            # Use mapped key or original key
+            snake_key = mapping.get(key, key)
+            result[snake_key] = value
+        
+        return result
+    
     async def insert_thread(
         self,
         message_id: str,
@@ -90,6 +156,20 @@ class PrismaDatabase:
         self._ensure_connected()
         
         try:
+            # Convert string intent to enum if provided
+            intent_enum = None
+            if intent:
+                try:
+                    intent_enum = ReplyIntent[intent.upper().replace(' ', '_')]
+                except (KeyError, AttributeError):
+                    intent_enum = ReplyIntent.UNCLEAR
+            
+            # Convert string status to enum
+            try:
+                status_enum = ThreadStatus[status.upper().replace(' ', '_')]
+            except (KeyError, AttributeError):
+                status_enum = ThreadStatus.PROCESSING
+            
             thread = await self.client.emailthread.create(
                 data={
                     'messageId': message_id,
@@ -99,9 +179,9 @@ class PrismaDatabase:
                     'subject': subject,
                     'initialReplyReceivedAt': received_at,
                     'initialReplyProcessedAt': datetime.now(),
-                    'initialReplyIntent': intent,
+                    'initialReplyIntent': intent_enum,
                     'initialReplyHasContact': has_contact,
-                    'status': status
+                    'status': status_enum
                 }
             )
             return thread.id
@@ -117,14 +197,19 @@ class PrismaDatabase:
             message_id: Unique Gmail message ID
             
         Returns:
-            Thread record as dict, or None if not found
+            Thread record as dict with snake_case keys, or None if not found
         """
         self._ensure_connected()
         
         thread = await self.client.emailthread.find_unique(
             where={'messageId': message_id}
         )
-        return thread.model_dump() if thread else None
+        if not thread:
+            return None
+        
+        # Convert to dict and transform camelCase to snake_case for backward compatibility
+        data = thread.model_dump()
+        return self._convert_to_snake_case(data)
     
     async def get_thread_by_id(self, thread_id: int) -> Optional[Dict]:
         """
@@ -134,14 +219,17 @@ class PrismaDatabase:
             thread_id: Internal database ID
             
         Returns:
-            Thread record as dict, or None if not found
+            Thread record as dict with snake_case keys, or None if not found
         """
         self._ensure_connected()
         
         thread = await self.client.emailthread.find_unique(
             where={'id': thread_id}
         )
-        return thread.model_dump() if thread else None
+        if not thread:
+            return None
+        
+        return self._convert_to_snake_case(thread.model_dump())
     
     async def update_thread(
         self,
@@ -182,6 +270,19 @@ class PrismaDatabase:
         
         for key, value in kwargs.items():
             prisma_key = field_mapping.get(key, key)
+            
+            # Convert string values to enums where needed
+            if prisma_key == 'status' and isinstance(value, str):
+                try:
+                    value = ThreadStatus[value.upper().replace(' ', '_')]
+                except (KeyError, AttributeError):
+                    pass  # Keep original value if conversion fails
+            elif prisma_key == 'initialReplyIntent' and isinstance(value, str):
+                try:
+                    value = ReplyIntent[value.upper().replace(' ', '_')]
+                except (KeyError, AttributeError):
+                    pass  # Keep original value if conversion fails
+            
             data[prisma_key] = value
         
         try:
@@ -244,16 +345,22 @@ class PrismaDatabase:
             limit: Maximum number of records to return
             
         Returns:
-            List of thread records as dicts (empty list if none found)
+            List of thread records as dicts with snake_case keys (empty list if none found)
         """
         self._ensure_connected()
         
+        # Convert string status to enum if needed
+        try:
+            status_enum = ThreadStatus[status.upper().replace(' ', '_')]
+        except (KeyError, AttributeError):
+            status_enum = status
+        
         threads = await self.client.emailthread.find_many(
-            where={'status': status},
+            where={'status': status_enum},
             order={'initialReplyReceivedAt': 'desc'},
             take=limit
         )
-        return [thread.model_dump() for thread in threads]
+        return [self._convert_to_snake_case(thread.model_dump()) for thread in threads]
     
     async def get_threads_needing_followup(
         self,
@@ -275,12 +382,12 @@ class PrismaDatabase:
             stage: Optional stage filter (1, 2, or 3)
             
         Returns:
-            List of thread records needing follow-up (empty list if none)
+            List of thread records with snake_case keys needing follow-up (empty list if none)
         """
         self._ensure_connected()
         
         where_clause = {
-            'status': 'FOLLOWUP_ACTIVE',
+            'status': ThreadStatus.FOLLOWUP_ACTIVE,
             'nextFollowupAt': {'lte': current_time, 'not': None},
             'stopReason': None,
             'failedSends': {'lt': 3}
@@ -293,7 +400,7 @@ class PrismaDatabase:
             where=where_clause,
             order={'nextFollowupAt': 'asc'}
         )
-        return [thread.model_dump() for thread in threads]
+        return [self._convert_to_snake_case(thread.model_dump()) for thread in threads]
     
     async def insert_reply(
         self,
@@ -335,6 +442,14 @@ class PrismaDatabase:
         self._ensure_connected()
         
         try:
+            # Convert string intent to enum if provided
+            intent_enum = None
+            if intent:
+                try:
+                    intent_enum = ReplyIntent[intent.upper().replace(' ', '_')]
+                except (KeyError, AttributeError):
+                    intent_enum = ReplyIntent.UNCLEAR
+            
             reply = await self.client.emailreply.create(
                 data={
                     'emailThreadId': email_thread_id,
@@ -345,7 +460,7 @@ class PrismaDatabase:
                     'subject': subject,
                     'bodyText': body_text,
                     'bodyHtml': body_html,
-                    'intent': intent,
+                    'intent': intent_enum,
                     'hasPhone': has_phone,
                     'hasAddress': has_address,
                     'extractedPhone': extracted_phone,
@@ -373,7 +488,7 @@ class PrismaDatabase:
             where={'emailThreadId': email_thread_id},
             order={'receivedAt': 'asc'}
         )
-        return [reply.model_dump() for reply in replies]
+        return [self._convert_to_snake_case(reply.model_dump()) for reply in replies]
     
     async def get_reply_by_message_id(self, message_id: str) -> Optional[Dict]:
         """
@@ -390,7 +505,7 @@ class PrismaDatabase:
         reply = await self.client.emailreply.find_unique(
             where={'messageId': message_id}
         )
-        return reply.model_dump() if reply else None
+        return self._convert_to_snake_case(reply.model_dump()) if reply else None
     
     async def insert_followup_send(
         self,
@@ -448,7 +563,7 @@ class PrismaDatabase:
             where={'emailThreadId': email_thread_id},
             order={'sentAt': 'asc'}
         )
-        return [send.model_dump() for send in sends]
+        return [self._convert_to_snake_case(send.model_dump()) for send in sends]
     
     async def insert_stage_transition(
         self,
@@ -477,13 +592,24 @@ class PrismaDatabase:
         """
         self._ensure_connected()
         
+        # Convert string status to enum
+        try:
+            from_status_enum = ThreadStatus[from_status.upper().replace(' ', '_')]
+        except (KeyError, AttributeError):
+            from_status_enum = ThreadStatus.PROCESSING
+        
+        try:
+            to_status_enum = ThreadStatus[to_status.upper().replace(' ', '_')]
+        except (KeyError, AttributeError):
+            to_status_enum = ThreadStatus.PROCESSING
+        
         transition = await self.client.stagetransition.create(
             data={
                 'emailThreadId': email_thread_id,
                 'fromStage': from_stage,
                 'toStage': to_stage,
-                'fromStatus': from_status,
-                'toStatus': to_status,
+                'fromStatus': from_status_enum,
+                'toStatus': to_status_enum,
                 'reason': reason,
                 'triggeredByReplyId': triggered_by_reply_id
             }
@@ -506,7 +632,7 @@ class PrismaDatabase:
             where={'emailThreadId': email_thread_id},
             order={'transitionedAt': 'asc'}
         )
-        return [transition.model_dump() for transition in transitions]
+        return [self._convert_to_snake_case(transition.model_dump()) for transition in transitions]
     
     async def get_thread_complete_history(self, email_thread_id: int) -> Optional[Dict]:
         """
@@ -677,13 +803,13 @@ class PrismaDatabase:
         
         threads = await self.client.emailthread.find_many(
             where={
-                'status': 'FOLLOWUP_ACTIVE',
+                'status': ThreadStatus.FOLLOWUP_ACTIVE,
                 'nextFollowupAt': {'not': None},
                 'stopReason': None
             },
             order={'nextFollowupAt': 'asc'}
         )
-        return [thread.model_dump() for thread in threads]
+        return [self._convert_to_snake_case(thread.model_dump()) for thread in threads]
 
 
 # Global database instance
