@@ -26,33 +26,208 @@ The Mosaic Autoresponder automates the follow-up process for creator outreach ca
 
 ### System Overview
 
-![System Architecture](diagrams/mmd.svg)
+```mermaid
+graph TB
+    subgraph "External Services"
+        GMAIL1[Gmail Account 1<br/>IMAP/SMTP]
+        GMAIL2[Gmail Account 2<br/>IMAP/SMTP]
+        GMAIL3[Gmail Account 3<br/>IMAP/SMTP]
+        GROQ[Groq AI API<br/>llama-3.1-8b-instant]
+    end
 
-### Component Interactions
+    subgraph "Data Layer"
+        POSTGRES[(PostgreSQL<br/>Prisma ORM)]
+        REDIS[(Redis<br/>Cache & Scheduler)]
+    end
 
-![Component Interactions](diagrams/component-inter.svg)
+    subgraph "Application Core"
+        MAIN[Main Application Loop]
+        WATCHER_LOOP[IMAP Watcher Loop<br/>60s polling]
+        SCHEDULER_LOOP[Scheduler Loop<br/>15min checks]
+    end
+
+    subgraph "Processing Modules"
+        WATCHER[IMAP Watcher]
+        ANALYZER[Email Analyzer<br/>Groq AI]
+        ROUTER[Decision Router]
+        SCHEDULER[Scheduler]
+        SENDER[SMTP Sender]
+    end
+
+    MAIN --> WATCHER_LOOP
+    MAIN --> SCHEDULER_LOOP
+    WATCHER_LOOP --> WATCHER
+    WATCHER --> GMAIL1
+    WATCHER --> GMAIL2
+    WATCHER --> GMAIL3
+    WATCHER --> ANALYZER
+    ANALYZER --> GROQ
+    ANALYZER --> ROUTER
+    ROUTER --> POSTGRES
+    ROUTER --> SENDER
+    SENDER --> GMAIL1
+    SENDER --> GMAIL2
+    SENDER --> GMAIL3
+    SCHEDULER_LOOP --> SCHEDULER
+    SCHEDULER --> REDIS
+    SCHEDULER --> POSTGRES
+    SCHEDULER --> SENDER
+
+    classDef external fill:#e1f5ff,stroke:#01579b
+    classDef data fill:#fff3e0,stroke:#e65100
+    classDef core fill:#f3e5f5,stroke:#4a148c
+    classDef module fill:#e8f5e9,stroke:#1b5e20
+
+    class GMAIL1,GMAIL2,GMAIL3,GROQ external
+    class POSTGRES,REDIS data
+    class MAIN,WATCHER_LOOP,SCHEDULER_LOOP core
+    class WATCHER,ANALYZER,ROUTER,SCHEDULER,SENDER module
+```
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant Gmail
+    participant Watcher
+    participant Router
+    participant AI as Groq AI
+    participant DB as PostgreSQL
+    participant Redis
+    participant Scheduler
+    participant SMTP
+
+    Note over Gmail,Watcher: Every 60 seconds
+    Watcher->>Gmail: Poll for unseen emails
+    Gmail-->>Watcher: New creator replies
+    Watcher->>Router: Process email
+    Router->>DB: Check thread status
+    Router->>AI: Analyze email
+    AI-->>Router: Intent + Contact info
+    
+    alt Interested + No Contact
+        Router->>SMTP: Send Stage 1 follow-up
+        SMTP->>Gmail: Send email
+        Router->>Redis: Schedule Stage 2 (+24h)
+        Router->>DB: Record follow-up sent
+    else Contact Provided
+        Router->>DB: Mark as DELEGATED
+        Router->>Gmail: Mark unread
+    else Not Interested
+        Router->>DB: Mark as COMPLETED
+    end
+
+    Note over Scheduler,Redis: Every 15 minutes
+    Scheduler->>Redis: Get due follow-ups
+    loop For each due follow-up
+        Scheduler->>DB: Verify thread status
+        Scheduler->>SMTP: Send follow-up
+        SMTP->>Gmail: Send email
+        Scheduler->>DB: Update thread
+    end
+```
 
 ### Database Schema
 
-![Database Schema](diagrams/database_schema.svg)
+```mermaid
+erDiagram
+    EmailThread ||--o{ EmailReply : "has many"
+    EmailThread ||--o{ FollowupSend : "has many"
+    EmailThread ||--o{ StageTransition : "has many"
+
+    EmailThread {
+        int id PK
+        string messageId UK
+        string threadId
+        string accountEmail
+        string creatorEmail
+        enum status
+        int currentStage
+        datetime nextFollowupAt
+        int followupsSent
+        bool delegatedToHuman
+    }
+
+    EmailReply {
+        int id PK
+        int emailThreadId FK
+        string messageId UK
+        enum intent
+        bool hasPhone
+        bool hasAddress
+    }
+
+    FollowupSend {
+        int id PK
+        int emailThreadId FK
+        int stage
+        datetime sentAt
+        bool sendSuccess
+    }
+
+    StageTransition {
+        int id PK
+        int emailThreadId FK
+        int fromStage
+        int toStage
+        enum fromStatus
+        enum toStatus
+    }
+```
+
+### Thread State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> PROCESSING: Email received
+
+    PROCESSING --> FOLLOWUP_ACTIVE: Interested + No contact
+    PROCESSING --> DELEGATED: Contact provided
+    PROCESSING --> DELEGATED: Clarification needed
+    PROCESSING --> COMPLETED: Not interested
+
+    FOLLOWUP_ACTIVE --> FOLLOWUP_ACTIVE: Stage 1→2→3
+    FOLLOWUP_ACTIVE --> DELEGATED: Creator replies
+    FOLLOWUP_ACTIVE --> COMPLETED: Max stages reached
+    FOLLOWUP_ACTIVE --> ERROR: Max send failures
+
+    DELEGATED --> [*]
+    COMPLETED --> [*]
+    ERROR --> [*]
+```
 
 ### Scheduling Architecture
 
-![Scheduling Architecture](diagrams/Scheduling.svg)
+```mermaid
+graph TB
+    subgraph "Source of Truth"
+        PG[(PostgreSQL<br/>next_followup_at)]
+    end
 
-PostgreSQL stores `next_followup_at` timestamp (source of truth). Redis caches scheduled follow-ups for fast lookups. Sync runs every 15 minutes to update Redis from PostgreSQL with automatic fallback if Redis is unavailable.
+    subgraph "Performance Cache"
+        RD[(Redis Sorted Set<br/>Score: timestamp)]
+    end
 
-### Error Handling & Retry Logic
+    subgraph "Sync - Every 15 min"
+        SYNC[Redis Sync Job]
+    end
 
-![Retry Logic](diagrams/retry.svg)
+    subgraph "Scheduler - Every 15 min"
+        SCHED[Get Due Follow-ups]
+        VERIFY[Verify Thread Status]
+        SEND[Send Follow-up]
+    end
 
-### Configuration Management
+    PG --> SYNC
+    SYNC --> RD
+    RD --> SCHED
+    SCHED --> VERIFY
+    VERIFY --> PG
+    VERIFY --> SEND
+    SEND --> PG
+```
 
-![Configuration Management](diagrams/Config-mgmt.svg)
-
-### Logging & Monitoring
-
-![Logging](diagrams/logging.svg)
+PostgreSQL stores `next_followup_at` timestamp (source of truth). Redis caches scheduled follow-ups for fast lookups. Sync runs every 15 minutes with automatic fallback if Redis is unavailable.
 
 ## Prerequisites
 
