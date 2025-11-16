@@ -1,3 +1,6 @@
+// Prisma Schema for Creator Outreach Follow-Up System
+// Enhanced schema with type-safe enums, timestamptz, and optimized indexes
+
 generator client {
   provider             = "prisma-client-py"
   interface            = "asyncio"
@@ -9,60 +12,113 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model EmailThread {
-  id                      Int               @id @default(autoincrement())
-  messageId               String            @unique @map("message_id") @db.VarChar(255)
-  threadId                String            @map("thread_id") @db.VarChar(255)
-  accountEmail            String            @map("account_email") @db.VarChar(255)
-  creatorEmail            String            @map("creator_email") @db.VarChar(255)
-  subject                 String?
-  initialReplyReceivedAt  DateTime          @map("initial_reply_received_at") @db.Timestamp(6)
-  initialReplyProcessedAt DateTime          @map("initial_reply_processed_at") @db.Timestamp(6)
-  initialReplyIntent      String?           @map("initial_reply_intent") @db.VarChar(50)
-  initialReplyHasContact  Boolean?          @default(false) @map("initial_reply_has_contact")
-  currentStage            Int?              @default(0) @map("current_stage")
-  lastFollowupSentAt      DateTime?         @map("last_followup_sent_at") @db.Timestamp(6)
-  nextFollowupAt          DateTime?         @map("next_followup_at") @db.Timestamp(6)
-  failedSends             Int?              @default(0) @map("failed_sends")
-  followupsSent           Int?              @default(0) @map("followups_sent")
-  status                  String            @db.VarChar(50)
-  stopReason              String?           @map("stop_reason") @db.VarChar(100)
-  delegatedToHuman        Boolean?          @default(false) @map("delegated_to_human")
-  delegatedAt             DateTime?         @map("delegated_at") @db.Timestamp(6)
-  completedAt             DateTime?         @map("completed_at") @db.Timestamp(6)
-  createdAt               DateTime?         @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt               DateTime?         @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
-  replies                 EmailReply[]
-  followupSends           FollowupSend[]
-  stageTransitions        StageTransition[]
+// Enums for type safety
+enum ThreadStatus {
+  PROCESSING
+  FOLLOWUP_ACTIVE
+  DELEGATED
+  COMPLETED
+}
 
+enum ReplyIntent {
+  INTERESTED
+  NOT_INTERESTED
+  CLARIFICATION
+  CONTACT_PROVIDED
+  CONTINUE_OVER_EMAIL
+  UNCLEAR
+}
+
+// Main email threads table
+// Stores the primary state of each email conversation with creators
+model EmailThread {
+  id        Int      @id @default(autoincrement())
+  messageId String   @unique @map("message_id") @db.VarChar(255)
+  threadId  String   @map("thread_id") @db.VarChar(255)
+  accountEmail String @map("account_email") @db.VarChar(255)
+  creatorEmail String @map("creator_email") @db.VarChar(255)
+  subject   String?  @db.Text
+
+  // Initial reply tracking (nullable in case thread created before reply processed)
+  initialReplyReceivedAt  DateTime?    @map("initial_reply_received_at") @db.Timestamptz(6)
+  initialReplyProcessedAt DateTime?    @map("initial_reply_processed_at") @db.Timestamptz(6)
+  initialReplyIntent      ReplyIntent? @map("initial_reply_intent")
+  initialReplyHasContact  Boolean      @default(false) @map("initial_reply_has_contact")
+
+  // Follow-up tracking
+  currentStage       Int       @default(0) @map("current_stage")
+  lastFollowupSentAt DateTime? @map("last_followup_sent_at") @db.Timestamptz(6)
+  nextFollowupAt     DateTime? @map("next_followup_at") @db.Timestamptz(6)
+  failedSends        Int       @default(0) @map("failed_sends")
+  followupsSent      Int       @default(0) @map("followups_sent")
+
+  // Status and completion tracking
+  status            ThreadStatus @default(PROCESSING)
+  stopReason        String?      @map("stop_reason") @db.VarChar(100)
+  delegatedToHuman  Boolean      @default(false) @map("delegated_to_human")
+  delegatedAt       DateTime?    @map("delegated_at") @db.Timestamptz(6)
+  completedAt       DateTime?    @map("completed_at") @db.Timestamptz(6)
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  replies           EmailReply[]
+  followupSends     FollowupSend[]
+  stageTransitions  StageTransition[]
+
+  // Indexes for performance
+  @@index([status])
   @@index([accountEmail], map: "idx_email_threads_account")
   @@index([currentStage, lastFollowupSentAt], map: "idx_email_threads_stage_time")
+  @@index([nextFollowupAt], map: "idx_email_threads_next_followup")
   @@index([threadId], map: "idx_email_threads_thread_id")
   @@index([creatorEmail], map: "idx_email_threads_creator")
-  @@index([status], map: "idx_email_threads_status")
+  @@index([stopReason], map: "idx_email_threads_stop_reason")
+  
+  // Composite index for followup scheduling queries
+  @@index([accountEmail, status, nextFollowupAt], map: "idx_account_status_nextfollowup")
+  
+  // Unique constraint: one thread per account (prevents duplicates)
+  @@unique([threadId, accountEmail], map: "unique_thread_per_account")
+  
   @@map("email_threads")
 }
 
+// Email replies table
+// Tracks ALL replies received in a thread (initial + subsequent)
 model EmailReply {
-  id               Int               @id @default(autoincrement())
-  emailThreadId    Int               @map("email_thread_id")
-  messageId        String            @unique @map("message_id") @db.VarChar(255)
-  receivedAt       DateTime          @map("received_at") @db.Timestamp(6)
-  processedAt      DateTime          @map("processed_at") @db.Timestamp(6)
-  replyToStage     Int?              @map("reply_to_stage")
-  subject          String?
-  bodyText         String?           @map("body_text")
-  bodyHtml         String?           @map("body_html")
-  intent           String?           @db.VarChar(50)
-  hasPhone         Boolean?          @default(false) @map("has_phone")
-  hasAddress       Boolean?          @default(false) @map("has_address")
-  extractedPhone   String?           @map("extracted_phone") @db.VarChar(50)
-  extractedAddress String?           @map("extracted_address")
-  analysisDetails  Json?             @map("analysis_details")
-  createdAt        DateTime?         @default(now()) @map("created_at") @db.Timestamp(6)
-  emailThread      EmailThread       @relation(fields: [emailThreadId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  stageTransitions StageTransition[]
+  id            Int      @id @default(autoincrement())
+  emailThreadId Int      @map("email_thread_id")
+  messageId     String   @unique @map("message_id") @db.VarChar(255)
+
+  // Reply metadata
+  receivedAt   DateTime @map("received_at") @db.Timestamptz(6)
+  processedAt  DateTime @map("processed_at") @db.Timestamptz(6)
+  replyToStage Int?     @map("reply_to_stage")
+
+  // Email content
+  subject  String? @db.Text
+  bodyText String? @map("body_text") @db.Text
+  bodyHtml String? @map("body_html") @db.Text
+
+  // Analysis results
+  intent            ReplyIntent? @map("intent")
+  hasPhone          Boolean      @default(false) @map("has_phone")
+  hasAddress        Boolean      @default(false) @map("has_address")
+  extractedPhone    String?      @map("extracted_phone") @db.VarChar(50)
+  extractedAddress  String?      @map("extracted_address") @db.Text
+
+  // Additional extracted info
+  analysisDetails Json? @map("analysis_details")
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  emailThread       EmailThread       @relation(fields: [emailThreadId], references: [id], onDelete: Cascade)
+  stageTransitions  StageTransition[]
 
   @@index([emailThreadId], map: "idx_email_replies_thread")
   @@index([messageId], map: "idx_email_replies_message_id")
@@ -71,17 +127,26 @@ model EmailReply {
   @@map("email_replies")
 }
 
+// Follow-up sends table
+// Tracks each follow-up email we SENT
 model FollowupSend {
-  id            Int         @id @default(autoincrement())
-  emailThreadId Int         @map("email_thread_id")
+  id            Int      @id @default(autoincrement())
+  emailThreadId Int      @map("email_thread_id")
   stage         Int
-  sentAt        DateTime    @map("sent_at") @db.Timestamp(6)
-  templateUsed  String?     @map("template_used")
-  sendSuccess   Boolean?    @default(true) @map("send_success")
-  sendError     String?     @map("send_error")
-  smtpMessageId String?     @map("smtp_message_id") @db.VarChar(255)
-  createdAt     DateTime?   @default(now()) @map("created_at") @db.Timestamp(6)
-  emailThread   EmailThread @relation(fields: [emailThreadId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sentAt        DateTime @map("sent_at") @db.Timestamptz(6)
+  templateUsed  String?  @map("template_used") @db.Text
+
+  // Send status
+  sendSuccess Boolean @default(true) @map("send_success")
+  sendError   String? @map("send_error") @db.Text
+
+  // Email details
+  smtpMessageId String? @map("smtp_message_id") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  emailThread EmailThread @relation(fields: [emailThreadId], references: [id], onDelete: Cascade)
 
   @@index([emailThreadId], map: "idx_followup_sends_thread")
   @@index([stage], map: "idx_followup_sends_stage")
@@ -89,18 +154,25 @@ model FollowupSend {
   @@map("followup_sends")
 }
 
+// Stage transitions table
+// Tracks when and why thread moved between stages
 model StageTransition {
-  id                 Int         @id @default(autoincrement())
-  emailThreadId      Int         @map("email_thread_id")
-  fromStage          Int         @map("from_stage")
-  toStage            Int         @map("to_stage")
-  fromStatus         String      @map("from_status") @db.VarChar(50)
-  toStatus           String      @map("to_status") @db.VarChar(50)
-  reason             String?     @map("reason") @db.VarChar(100)
-  triggeredByReplyId Int?        @map("triggered_by_reply_id")
-  transitionedAt     DateTime?   @default(now()) @map("transitioned_at") @db.Timestamp(6)
-  emailThread        EmailThread @relation(fields: [emailThreadId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  triggeredByReply   EmailReply? @relation(fields: [triggeredByReplyId], references: [id], onUpdate: NoAction)
+  id             Int          @id @default(autoincrement())
+  emailThreadId  Int          @map("email_thread_id")
+  fromStage      Int          @map("from_stage")
+  toStage        Int          @map("to_stage")
+  fromStatus     ThreadStatus @map("from_status")
+  toStatus       ThreadStatus @map("to_status")
+
+  // Transition reason
+  reason              String? @map("reason") @db.VarChar(100)
+  triggeredByReplyId  Int?    @map("triggered_by_reply_id")
+
+  transitionedAt DateTime @default(now()) @map("transitioned_at") @db.Timestamptz(6)
+
+  // Relations
+  emailThread      EmailThread @relation(fields: [emailThreadId], references: [id], onDelete: Cascade)
+  triggeredByReply EmailReply? @relation(fields: [triggeredByReplyId], references: [id], onDelete: SetNull)
 
   @@index([emailThreadId], map: "idx_stage_transitions_thread")
   @@index([transitionedAt], map: "idx_stage_transitions_time")
