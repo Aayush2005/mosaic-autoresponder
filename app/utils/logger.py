@@ -34,10 +34,8 @@ def setup_logger(
     log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Get or create logger
     logger = logging.getLogger(name)
     
-    # Only configure if not already configured
     if logger.handlers:
         return logger
     
@@ -63,10 +61,8 @@ def setup_logger(
     # Set suffix to include date in filename
     file_handler.suffix = "%Y-%m-%d"
     
-    # Custom namer to create clean filenames like: application-2025-11-16.log
+
     def namer(default_name):
-        # default_name will be like: logs/application.log.2025-11-16
-        # We want: logs/application-2025-11-16.log
         base_filename = log_file.replace('.log', '')
         date_part = default_name.split('.')[-1]  # Get the date part
         return f"{base_filename}-{date_part}.log"

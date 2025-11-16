@@ -265,7 +265,7 @@ uv --version
 
 ```bash
 # Clone repository
-git clone <repository-url>
+git clone https://github.com/Aayush2005/mosaic-autoresponder.git
 cd mosaic-autoresponder
 
 # Create virtual environment
@@ -456,7 +456,6 @@ mosaic-autoresponder/
 │   ├── core/
 │   │   ├── decision_router.py     # Business logic routing
 │   │   ├── scheduler.py           # Follow-up scheduling
-│   │   ├── debouncer.py           # Duplicate prevention
 │   │   └── redis_sync.py          # Redis synchronization
 │   ├── db/
 │   │   └── prisma_client.py       # Prisma ORM database client
@@ -641,9 +640,9 @@ redis-cli GET "rate_limit:account1@gmail.com"
 
 **Should Not Happen** - System has multiple idempotency safeguards:
 - Database `message_id` UNIQUE constraint
-- Redis debouncing (10-second window)
 - `followups_sent` counter check
-- Redis lock keys
+- Redis scheduler deduplication keys
+- Thread status verification
 
 **If it happens**:
 ```bash
