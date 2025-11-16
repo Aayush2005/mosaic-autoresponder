@@ -24,24 +24,35 @@ The Mosaic Autoresponder automates the follow-up process for creator outreach ca
 
 ## Architecture
 
-```
-IMAP Watcher → Email Parser → Intent Classifier (Groq AI) → Decision Router
-                                                                    ↓
-                                                    ┌───────────────┴───────────────┐
-                                                    ↓                               ↓
-                                            SMTP Sender                      Mark Unread
-                                                    ↓                        (Human Review)
-                                            PostgreSQL Scheduler
-                                            (Redis cache, 15min sync)
-```
+### System Overview
 
-**Scheduling Architecture:**
-- PostgreSQL stores `next_followup_at` timestamp (source of truth)
-- Redis caches scheduled follow-ups for fast lookups
-- Sync runs every 15 minutes to update Redis from PostgreSQL
-- Automatic fallback to PostgreSQL if Redis is unavailable
+![System Architecture](diagrams/mmd.svg)
 
-See `app/docs/SCHEDULING_ARCHITECTURE.md` for complete details.
+### Component Interactions
+
+![Component Interactions](diagrams/component-inter.svg)
+
+### Database Schema
+
+![Database Schema](diagrams/database_schema.svg)
+
+### Scheduling Architecture
+
+![Scheduling Architecture](diagrams/Scheduling.svg)
+
+PostgreSQL stores `next_followup_at` timestamp (source of truth). Redis caches scheduled follow-ups for fast lookups. Sync runs every 15 minutes to update Redis from PostgreSQL with automatic fallback if Redis is unavailable.
+
+### Error Handling & Retry Logic
+
+![Retry Logic](diagrams/retry.svg)
+
+### Configuration Management
+
+![Configuration Management](diagrams/Config-mgmt.svg)
+
+### Logging & Monitoring
+
+![Logging](diagrams/logging.svg)
 
 ## Prerequisites
 
@@ -518,8 +529,8 @@ uv run ruff check app/
 
 ## License
 
-[Your License Here]
+MIT License
 
 ## Contact
 
-[Your Contact Information]
+aayushkr646@gmail.com
