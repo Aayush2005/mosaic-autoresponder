@@ -7,11 +7,13 @@ requires-python = ">=3.12"
 dependencies = [
     "aioimaplib>=2.0.1",
     "aiosmtplib>=5.0.0",
-    "asyncpg>=0.30.0",
     "email-reply-parser>=0.5.12",
+    "graphviz>=0.21",
     "langchain>=1.0.7",
     "langchain-groq>=1.0.1",
     "phonenumbers>=9.0.18",
+    "prisma>=0.15.0",
+    "pydantic-settings>=2.6.1",
     "python-dotenv>=1.2.1",
     "redis>=7.0.1",
 ]

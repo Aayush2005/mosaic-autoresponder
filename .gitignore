@@ -46,8 +46,16 @@ htmlcov/
 *.tmp
 *.bak
 
+# Generated diagrams (regenerate with tools/visualize_schema.py)
+database_schema.png
+database_schema.svg
+database_schema.dot
 
 .kiro/
 examples/
 data/
 docs/
+tests/
+scripts/
+tools/
+diagrams/
