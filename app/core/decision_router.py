@@ -5,7 +5,6 @@ Determines whether to send follow-ups, delegate to humans, or mark threads
 as complete based on intent classification and contact information detection.
 """
 
-import logging
 from typing import Dict, Optional
 from datetime import datetime
 from enum import Enum
@@ -19,9 +18,10 @@ from app.ml.email_analyzer import (
     INTENT_CONTINUE_OVER_EMAIL,
     analyze_email
 )
+from app.utils.logger import get_logger
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Action(Enum):
