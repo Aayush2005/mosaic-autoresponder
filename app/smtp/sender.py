@@ -13,7 +13,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import aiosmtplib
 
-from app.db.connect import db
+from app.db.prisma_client import db
 from app.config import settings
 from app.utils.logger import get_logger
 

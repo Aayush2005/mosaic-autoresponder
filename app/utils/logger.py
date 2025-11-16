@@ -52,6 +52,7 @@ def setup_logger(
     )
     
     # Create rotating file handler (daily rotation, 30-day retention)
+    # Files will be named: application-YYYY-MM-DD.log
     file_handler = TimedRotatingFileHandler(
         filename=log_file,
         when='midnight',
@@ -59,6 +60,18 @@ def setup_logger(
         backupCount=30,
         encoding='utf-8'
     )
+    # Set suffix to include date in filename
+    file_handler.suffix = "%Y-%m-%d"
+    
+    # Custom namer to create clean filenames like: application-2025-11-16.log
+    def namer(default_name):
+        # default_name will be like: logs/application.log.2025-11-16
+        # We want: logs/application-2025-11-16.log
+        base_filename = log_file.replace('.log', '')
+        date_part = default_name.split('.')[-1]  # Get the date part
+        return f"{base_filename}-{date_part}.log"
+    
+    file_handler.namer = namer
     file_handler.setLevel(level)
     file_handler.setFormatter(formatter)
     

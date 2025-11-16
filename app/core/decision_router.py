@@ -9,7 +9,7 @@ from typing import Dict, Optional
 from datetime import datetime
 from enum import Enum
 
-from app.db.connect import db
+from app.db.prisma_client import db
 from app.ml.email_analyzer import (
     INTENT_INTERESTED,
     INTENT_NOT_INTERESTED,

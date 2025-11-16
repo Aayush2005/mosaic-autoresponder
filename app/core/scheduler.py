@@ -11,7 +11,7 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import redis.asyncio as redis
 
-from app.db.connect import db
+from app.db.prisma_client import db
 from app.smtp.sender import sender
 from app.config import settings
 from app.utils.logger import get_logger, log_followup_sent, log_followup_scheduled
@@ -36,8 +36,8 @@ class FollowUpScheduler:
     
     FOLLOWUP_SORTED_SET = "followups:scheduled"
     CHECK_INTERVAL_SECONDS = 900  # 15 minutes
-    STAGE_2_DELAY_HOURS = 24
-    STAGE_3_DELAY_HOURS = 48
+    STAGE_2_DELAY_HOURS = 24  # 1 day after Stage 1
+    STAGE_3_DELAY_HOURS = 48  # 2 days after Stage 2
     DEDUP_KEY_TTL_SECONDS = 3600  # 1 hour
     
     def __init__(self):
@@ -385,14 +385,13 @@ class FollowUpScheduler:
                 )
                 log_followup_scheduled(message_id, 2, self.STAGE_2_DELAY_HOURS)
             elif stage == 2:
-                # Schedule Stage 3 for 48 hours later (from original, so 24h from now)
-                delay = self.STAGE_3_DELAY_HOURS - self.STAGE_2_DELAY_HOURS
+                # Schedule Stage 3 for 48 hours (2 days) after Stage 2
                 await self.schedule_followup(
                     message_id,
                     stage=3,
-                    delay_hours=delay
+                    delay_hours=48
                 )
-                log_followup_scheduled(message_id, 3, delay)
+                log_followup_scheduled(message_id, 3, 48)
             
             return True
         else:

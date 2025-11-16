@@ -14,7 +14,6 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.config import settings
-from app.utils.training_data_logger import log_training_data
 from app.utils.logger import get_logger
 
 
@@ -44,7 +43,7 @@ class EmailAnalyzer:
             raise ValueError("GROQ_API_KEY must be configured in settings")
         
         self.llm = ChatGroq(
-            model="mixtral-8x7b-32768",
+            model="llama-3.1-8b-instant",
             temperature=0,
             groq_api_key=settings.groq_api_key,
             max_tokens=400
@@ -75,12 +74,12 @@ class EmailAnalyzer:
    - DON'T extract if just mentioned in conversation
 
 Return JSON with this EXACT structure:
-{
+{{
   "intent": "INTENT_CATEGORY",
   "phone_numbers": ["list of phone numbers if provided"],
   "has_address": true/false,
   "address_text": "full address if provided, otherwise null"
-}
+}}
 
 Rules:
 - If contact info is provided, intent should be CONTACT_PROVIDED
@@ -162,9 +161,6 @@ Rules:
             f"Analyzed email - Intent: {result['intent']}, "
             f"Has phone: {result['has_phone']}, Has address: {result['has_address']}"
         )
-        
-        # Log for training data
-        log_training_data(email_body, result['intent'])
         
         return result
     

@@ -7,7 +7,7 @@ and handles connection failures with exponential backoff.
 
 import asyncio
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import aioimaplib
 
 from app.config import settings
@@ -178,9 +178,10 @@ class IMAPWatcher:
     
     async def fetch_new_replies(self, account: Dict[str, str]) -> List[Dict]:
         """
-        Fetch new unseen emails from account inbox.
+        Fetch new unseen emails from account inbox (last 7 days only).
         
-        Selects INBOX, searches for unseen messages, and fetches their content.
+        Selects INBOX, searches for unseen messages from the last 7 days,
+        and fetches their content.
         
         Args:
             account: Account config dict
@@ -193,7 +194,13 @@ class IMAPWatcher:
             
             await client.select('INBOX')
             
-            response = await client.search('UNSEEN')
+            # Calculate date 7 days ago in IMAP format (DD-Mon-YYYY)
+            seven_days_ago = datetime.now() - timedelta(days=7)
+            date_str = seven_days_ago.strftime('%d-%b-%Y')
+            
+            # Search for unseen emails from last 7 days
+            search_criteria = f'UNSEEN SINCE {date_str}'
+            response = await client.search(search_criteria)
             
             if response.result != 'OK':
                 logger.warning(f"Search failed for {account['email']}: {response}")
@@ -210,7 +217,8 @@ class IMAPWatcher:
             
             emails = []
             
-            for msg_id in message_ids:
+            for idx, msg_id in enumerate(message_ids):
+                logger.info(f"Processing message {idx+1}/{len(message_ids)}: {msg_id}")
                 try:
                     fetch_response = await client.fetch(msg_id, '(RFC822)')
                     
@@ -220,24 +228,61 @@ class IMAPWatcher:
                         )
                         continue
                     
+                    # Extract raw email from IMAP response
+                    # Response format varies by server, try multiple approaches
                     raw_email = None
-                    for line in fetch_response.lines:
-                        if isinstance(line, bytes) and line.startswith(b'From:'):
-                            raw_email = line
-                            break
-                        elif isinstance(line, tuple) and len(line) > 1:
-                            raw_email = line[1]
+                    
+                    # Debug: log response structure
+                    logger.debug(f"FETCH response has {len(fetch_response.lines)} lines")
+                    
+                    for idx, line in enumerate(fetch_response.lines):
+                        logger.debug(f"Line {idx}: type={type(line)}, len={len(line) if isinstance(line, (bytes, bytearray, tuple, list)) else 'N/A'}")
+                        
+                        # Approach 1: Tuple with email data
+                        if isinstance(line, tuple):
+                            for part in line:
+                                if isinstance(part, (bytes, bytearray)) and len(part) > 100:
+                                    raw_email = bytes(part) if isinstance(part, bytearray) else part
+                                    logger.debug(f"Found email in tuple part, size={len(part)}")
+                                    break
+                        
+                        # Approach 2: Direct bytes or bytearray with email headers
+                        elif isinstance(line, (bytes, bytearray)):
+                            if len(line) > 100 and (b'From:' in line or b'Return-Path:' in line or b'Received:' in line):
+                                raw_email = bytes(line) if isinstance(line, bytearray) else line
+                                logger.debug(f"Found email as direct bytes/bytearray, size={len(line)}")
+                                break
+                            # Sometimes the email is in a smaller chunk
+                            elif b'RFC822' in line:
+                                # Next line might have the email
+                                if idx + 1 < len(fetch_response.lines):
+                                    next_line = fetch_response.lines[idx + 1]
+                                    if isinstance(next_line, (bytes, bytearray)) and len(next_line) > 100:
+                                        raw_email = bytes(next_line) if isinstance(next_line, bytearray) else next_line
+                                        logger.debug(f"Found email in next line after RFC822, size={len(next_line)}")
+                                        break
+                        
+                        if raw_email:
                             break
                     
                     if not raw_email:
                         logger.warning(
-                            f"Could not extract raw email for message {msg_id}"
+                            f"Could not extract raw email for message {msg_id}, "
+                            f"response lines: {len(fetch_response.lines)}, "
+                            f"line types: {[type(l).__name__ for l in fetch_response.lines]}"
                         )
                         continue
+                    
+                    logger.info(f"Successfully extracted raw email for message {msg_id}")
                     
                     parsed = parse_email(raw_email)
                     parsed['account_email'] = account['email']
                     parsed['imap_uid'] = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
+                    
+                    logger.info(
+                        f"Parsed email: subject='{parsed.get('subject', 'N/A')}', "
+                        f"from={parsed.get('from_email', 'N/A')}"
+                    )
                     
                     emails.append(parsed)
                     
@@ -275,12 +320,23 @@ class IMAPWatcher:
         message_id = email_data.get('message_id', '')
         subject = email_data.get('subject', '').lower()
         
+        # Debug logging
+        logger.debug(
+            f"Checking if reply: subject='{subject}', "
+            f"thread_id='{thread_id[:50] if thread_id else 'None'}', "
+            f"message_id='{message_id[:50] if message_id else 'None'}', "
+            f"is_different={thread_id != message_id}"
+        )
+        
         if thread_id and thread_id != message_id:
+            logger.info(f"Email identified as reply (different thread_id): {subject}")
             return True
         
         if subject.startswith('re:') or subject.startswith('fwd:'):
+            logger.info(f"Email identified as reply (Re:/Fwd: in subject): {subject}")
             return True
         
+        logger.debug(f"Email NOT identified as reply: {subject}")
         return False
     
     async def watch_account(self, account: Dict[str, str]) -> List[Dict]:
@@ -298,14 +354,21 @@ class IMAPWatcher:
         try:
             emails = await self.fetch_new_replies(account)
             
+            logger.info(f"Filtering {len(emails)} emails for replies to outreach...")
+            
             replies = [
                 email for email in emails
                 if self.is_reply_to_outreach(email)
             ]
             
+            logger.info(
+                f"Found {len(replies)} replies to outreach out of {len(emails)} total emails "
+                f"in {account['email']}"
+            )
+            
             if replies:
                 logger.info(
-                    f"Found {len(replies)} replies to outreach in {account['email']}"
+                    f"Reply subjects: {[e.get('subject', 'N/A') for e in replies]}"
                 )
             
             return replies
