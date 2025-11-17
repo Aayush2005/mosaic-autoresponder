@@ -8,7 +8,7 @@ idempotency checks against database state.
 
 import asyncio
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import redis.asyncio as redis
 
 from app.db.prisma_client import db
@@ -61,18 +61,20 @@ class FollowUpScheduler:
         if not url:
             raise ValueError("REDIS_URL not configured in settings")
         
-        self.redis_client = await redis.from_url(
+        # redis.from_url() is NOT awaitable - returns client directly
+        self.redis_client = redis.from_url(
             url,
             encoding="utf-8",
             decode_responses=True
         )
+        await self.redis_client.ping()
         
         logger.info(f"Connected to Redis at {url}")
     
     async def close(self):
-        """Close Redis connection."""
+        """Close Redis connection and connection pool."""
         if self.redis_client:
-            await self.redis_client.close()
+            await self.redis_client.connection_pool.disconnect()
             self.redis_client = None
             logger.info("Closed Redis connection")
     
@@ -113,7 +115,8 @@ class FollowUpScheduler:
             raise ValueError(f"Invalid stage: {stage}. Must be 1, 2, or 3")
         
         # Calculate when to send (epoch timestamp)
-        send_at = datetime.now() + timedelta(hours=delay_hours)
+        # Use timezone-aware UTC datetime to avoid timezone issues
+        send_at = datetime.now(timezone.utc) + timedelta(hours=delay_hours)
         score = send_at.timestamp()
         
         # Store as "message_id:stage" in sorted set
@@ -201,14 +204,16 @@ class FollowUpScheduler:
         """
         self._ensure_connected()
         
-        now = datetime.now().timestamp()
+        # Use timezone-aware UTC datetime to avoid timezone issues
+        now = datetime.now(timezone.utc).timestamp()
         
         try:
             # Get all items with score <= now (due for sending)
             # ZRANGEBYSCORE returns items in ascending order by score
+            # Use "-inf" instead of 0 to handle any valid timestamp
             items = await self.redis_client.zrangebyscore(
                 self.FOLLOWUP_SORTED_SET,
-                min=0,
+                min="-inf",
                 max=now
             )
             

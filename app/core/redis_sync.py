@@ -53,7 +53,8 @@ class RedisSync:
     async def connect(self):
         """Connect to Redis."""
         try:
-            self.redis_client = await redis.from_url(
+            # redis.from_url() is NOT awaitable - it returns client directly
+            self.redis_client = redis.from_url(
                 self.redis_url,
                 encoding="utf-8",
                 decode_responses=True
@@ -65,9 +66,9 @@ class RedisSync:
             self.redis_client = None
     
     async def close(self):
-        """Close Redis connection."""
+        """Close Redis connection and connection pool."""
         if self.redis_client:
-            await self.redis_client.close()
+            await self.redis_client.connection_pool.disconnect()
             self.redis_client = None
             logger.info("Closed Redis connection")
     
@@ -76,7 +77,7 @@ class RedisSync:
         Sync follow-up schedules from PostgreSQL to Redis.
         
         Fetches all threads with scheduled follow-ups from PostgreSQL
-        and updates Redis sorted set.
+        and updates Redis sorted set atomically using temp key + rename.
         
         Returns:
             Number of threads synced
@@ -95,12 +96,14 @@ class RedisSync:
                 await self.redis_client.delete("followup_schedule")
                 return 0
             
-            # Clear existing schedule
-            await self.redis_client.delete("followup_schedule")
-            
-            # Add threads to sorted set
+            # Use atomic swap to avoid data gaps during sync
+            temp_key = "followup_schedule_tmp"
             pipeline = self.redis_client.pipeline()
             
+            # Clear temp key
+            pipeline.delete(temp_key)
+            
+            # Add threads to temp sorted set
             for thread in threads:
                 next_followup_at = thread['next_followup_at']
                 message_id = thread['message_id']
@@ -109,11 +112,14 @@ class RedisSync:
                 score = next_followup_at.timestamp()
                 
                 # Store as sorted set member
-                pipeline.zadd("followup_schedule", {message_id: score})
+                pipeline.zadd(temp_key, {message_id: score})
+            
+            # Atomic swap: rename temp to production key
+            pipeline.rename(temp_key, "followup_schedule")
             
             await pipeline.execute()
             
-            logger.info(f"Synced {len(threads)} threads to Redis")
+            logger.info(f"Synced {len(threads)} threads to Redis (atomic swap)")
             return len(threads)
             
         except Exception as e:
@@ -141,9 +147,10 @@ class RedisSync:
             # Get all threads with score <= current timestamp
             max_score = current_time.timestamp()
             
+            # Use "-inf" instead of 0 to handle any valid timestamp
             message_ids = await self.redis_client.zrangebyscore(
                 "followup_schedule",
-                min=0,
+                min="-inf",
                 max=max_score
             )
             
@@ -215,22 +222,73 @@ class RedisSync:
             logger.error(f"Error getting schedule count: {e}")
             return 0
     
+    async def acquire_sync_lock(self, ttl: int = 840) -> bool:
+        """
+        Acquire distributed lock for sync operation.
+        
+        Prevents multiple workers from syncing simultaneously.
+        
+        Args:
+            ttl: Lock TTL in seconds (default: 14 minutes, less than sync interval)
+            
+        Returns:
+            True if lock acquired, False otherwise
+        """
+        if not self.redis_client:
+            return False
+        
+        try:
+            # SET NX (only if not exists) with expiration
+            result = await self.redis_client.set(
+                "redis_sync_lock",
+                "locked",
+                nx=True,
+                ex=ttl
+            )
+            return result is not None
+        except Exception as e:
+            logger.error(f"Error acquiring sync lock: {e}")
+            return False
+    
+    async def release_sync_lock(self):
+        """Release distributed sync lock."""
+        if not self.redis_client:
+            return
+        
+        try:
+            await self.redis_client.delete("redis_sync_lock")
+        except Exception as e:
+            logger.error(f"Error releasing sync lock: {e}")
+    
     async def start_sync_loop(self):
         """
         Start the sync loop that runs every 15 minutes.
         
         Continuously syncs from PostgreSQL to Redis.
+        Uses distributed lock to prevent multiple workers from syncing.
         """
         self.running = True
         logger.info(f"Starting Redis sync loop (every {self.sync_interval}s)")
         
         while self.running:
             try:
-                # Sync from PostgreSQL
-                count = await self.sync_from_postgres()
+                # Try to acquire lock (prevents multiple workers from syncing)
+                lock_acquired = await self.acquire_sync_lock(ttl=self.sync_interval - 60)
                 
-                if count > 0:
-                    logger.info(f"Redis sync complete: {count} threads scheduled")
+                if not lock_acquired:
+                    logger.debug("Another worker is syncing, skipping this cycle")
+                    await asyncio.sleep(self.sync_interval)
+                    continue
+                
+                try:
+                    # Sync from PostgreSQL
+                    count = await self.sync_from_postgres()
+                    
+                    if count > 0:
+                        logger.info(f"Redis sync complete: {count} threads scheduled")
+                finally:
+                    # Always release lock
+                    await self.release_sync_lock()
                 
                 # Wait for next sync
                 await asyncio.sleep(self.sync_interval)
