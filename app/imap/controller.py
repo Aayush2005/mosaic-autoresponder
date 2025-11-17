@@ -248,7 +248,10 @@ class IMAPController:
     
     async def close_all(self):
         """Close all IMAP connections."""
-        for email, client in self.connections.items():
+        # Create a copy of items to avoid "dictionary changed size during iteration" error
+        connections_copy = list(self.connections.items())
+        
+        for email, client in connections_copy:
             if client:
                 try:
                     await client.logout()
